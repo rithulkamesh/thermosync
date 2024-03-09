@@ -1,29 +1,31 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/labstack/echo"
 	"github.com/labstack/echo/middleware"
+	"github.com/rithulkamesh/thermosync/data"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
-type DataStruct struct {
-	Timestamp int     `json:"timestamp"`
-	BodyTemp  float32 `json:"bodytemp"`
-	AcTemp    float32 `json:"actemp"`
-}
+var collection *mongo.Collection
+var ctx = context.TODO()
+var lastAcTemp = 23
 
 func main() {
 	e := echo.New()
 
+	data.InitDB()
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowHeaders: []string{"Authorization", "content-type"},
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{http.MethodPost, http.MethodDelete},
 	}))
 
+	e.POST("/airquality", handleAirQuality)
 	e.POST("/bodytemp", handleBodyTemp)
 
 	port := os.Getenv("PORT")
@@ -33,14 +35,32 @@ func main() {
 	e.Logger.Fatal(e.Start("0.0.0.0:" + port))
 }
 
-func handleBodyTemp(c echo.Context) error {
-	data := new(DataStruct)
-	if err := c.Bind(data); err != nil {
+func handleAirQuality(c echo.Context) error {
+	var aq data.AirQualityData
+	if err := c.Bind(&aq); err != nil {
 		return err
 	}
 
-	t := time.Unix(int64(data.Timestamp), 0)
-	c.Logger().Infof("Received data at %v: Body Temp = %.2f°C", t, data.BodyTemp)
+	if aq.Temp == 0 || aq.Humidity == 0 || aq.Co2 == 0 {
+		return c.JSON(http.StatusBadRequest, "missing fields")
+	}
 
-	return c.JSON(http.StatusOK, data)
+	aq.Save()
+	return c.String(http.StatusOK, "OK")
+}
+
+func handleBodyTemp(c echo.Context) error {
+	var bt data.BodyTemp
+	if err := c.Bind(&bt); err != nil {
+		return err
+	}
+
+	if bt.BodyTemp == 0 {
+		return c.JSON(http.StatusBadRequest, "missing fields")
+	}
+
+	bt.AcTemp = lastAcTemp
+
+	bt.Save()
+	return c.String(http.StatusOK, "OK")
 }
