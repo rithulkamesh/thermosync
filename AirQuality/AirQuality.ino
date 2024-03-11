@@ -3,115 +3,121 @@
 #include "ThingSpeak.h"
 #include <ESP8266WiFi.h>
 #include <Adafruit_SH110X.h>
+#include <Wire.h>
 
-#define i2c_Address 0x3c
+// Define constants
+#define I2C_ADDRESS 0x3c
 #define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64 
-#define OLED_RESET -1 
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+#define CO2_ZERO 55
+#define DHT_PIN 2
+#define CO2_PIN A0
+#define CHANNEL_NUMBER 2463215
 
-#define anInput     A0
-#define digTrigger   2
-#define co2Zero     55   
+#define WRITE_API_KEY "KCPK8E9WC0KOSGRP" // Invalidated
+#define SSID "Epsilon" // Mobile hotspot to handle local network
+#define PASSWORD "d56a666q"  // Invalidated
 
 Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-DHT11 dht11(2);
-
-unsigned long channelNumber = 2463215;
-const char * writeApiKey = "KCPK8E9WC0KOSGRP";
-
-
-String ssid = "Epsilon";
-String password = "d56a666q";
-WiFiClient  client;
+DHT11 dht11(DHT_PIN);
+WiFiClient client;
 
 void setup() {
     Serial.begin(9600);
-    display.begin(i2c_Address, true);
+    display.begin(I2C_ADDRESS, true);
     dht11.setDelay(500);
 
-     WiFi.mode(WIFI_STA);
-     ThingSpeak.begin(client);
+    WiFi.mode(WIFI_STA);
+    ThingSpeak.begin(client);
 }
 
 void loop() {
+    // Connect to Wi-Fi if not connected
+    connectToWiFi();
 
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.print("Attempting to connect to SSID: ");
-    Serial.println(ssid);
-    while (WiFi.status() != WL_CONNECTED) {
-      WiFi.begin(ssid, password);
-      Serial.print(".");
-      delay(5000);
+    // Read temperature and humidity
+    int temperature, humidity;
+    readDHT11(&temperature, &humidity);
+
+    // Read CO2 levels
+    int co2ppm = readCO2Levels();
+
+    // Display readings on OLED
+    displayReadings(temperature, humidity, co2ppm);
+
+    // Send data to ThingSpeak
+    sendDataToThingSpeak(temperature, humidity, co2ppm);
+
+    delay(20000);
+}
+
+void connectToWiFi() {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.print("Attempting to connect to SSID: ");
+        Serial.println(SSID);
+        while (WiFi.status() != WL_CONNECTED) {
+            WiFi.begin(SSID, PASSWORD);
+            Serial.print(".");
+            delay(5000);
+        }
+        Serial.println("\nConnected.");
     }
-    Serial.println("\nConnected.");
-  }
+}
 
-    int temperature = 0;
-    int humidity = 0;
-    
+void readDHT11(int* temperature, int* humidity) {
+    int result = dht11.readTemperatureHumidity(*temperature, *humidity);
+    if (result != 0) {
+        Serial.println(DHT11::getErrorString(result));
+    }
+}
+
+int readCO2Levels() {
     int co2now[10];
     int co2raw = 0;
     int co2comp = 0;
     int co2ppm = 0;
-    int zzz = 0;
+    int sum = 0;
 
-    int result = dht11.readTemperatureHumidity(temperature, humidity);
-
-
-    for (int x = 0;x<10;x++) {
-      co2now[x]=analogRead(A0);
-      delay(200);
+    for (int i = 0; i < 10; i++) {
+        co2now[i] = analogRead(CO2_PIN);
+        delay(200);
+        sum += co2now[i];
     }
 
-    for (int x = 0;x<10;x++){ 
-      zzz=zzz + co2now[x];
-    }
+    co2raw = sum / 10;
+    co2comp = co2raw - CO2_ZERO;
+    co2ppm = map(co2comp, 0, 1023, 400, 5000);
 
-    co2raw = zzz/10;
-    co2comp = co2raw - co2Zero;
-    co2ppm = map(co2comp,0,1023,400,5000); 
+    return co2ppm;
+}
 
-
-
-
-    if (result == 0) {
-
+void displayReadings(int temperature, int humidity, int co2ppm) {
     display.clearDisplay();
     display.setTextSize(1);
     display.setTextColor(SH110X_WHITE);
     display.setCursor(0, 0);
-    display.print("C02 Levels: ");
+    display.print("CO2 Levels: ");
     display.print(co2ppm);
-
     display.print("ppm\n");
-
     display.print("Temperature: ");
     display.print(temperature);
     display.print(" C\n");
     display.print("Humidity: ");
-
     display.print(humidity);
     display.print("%\n");
     display.display();
+}
 
+void sendDataToThingSpeak(int temperature, int humidity, int co2ppm) {
     ThingSpeak.setField(1, temperature);
     ThingSpeak.setField(2, humidity);
     ThingSpeak.setField(3, co2ppm);
 
-  int httpCode = ThingSpeak.writeFields(channelNumber, writeApiKey);
-  if (httpCode == 200) {
-    Serial.println("Channel write successful.");
-  }
-  else {
-    Serial.println("Problem writing to channel. HTTP error code " + String(httpCode));
-  }
-
-  delay(20000);
+    int httpCode = ThingSpeak.writeFields(CHANNEL_NUMBER, WRITE_API_KEY);
+    if (httpCode == 200) {
+        Serial.println("Channel write successful.");
     } else {
-        Serial.println(DHT11::getErrorString(result));
+        Serial.println("Problem writing to channel. HTTP error code " + String(httpCode));
     }
-
-
-
 }
-
