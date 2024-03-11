@@ -58,7 +58,7 @@ void connectToWiFi() {
         Serial.println(SSID);
         while (WiFi.status() != WL_CONNECTED) {
             WiFi.begin(SSID, PASSWORD);
-            Serial.print(".");
+            Serial.print("Connecting...");
             delay(5000);
         }
         Serial.println("\nConnected.");
